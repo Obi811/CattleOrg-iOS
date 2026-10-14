@@ -34,7 +34,10 @@ final class TaskListViewModel {
 
 struct TaskListView: View {
     @Environment(SessionManager.self) private var session
+    @Environment(PushRouter.self) private var pushRouter
     @State private var vm = TaskListViewModel()
+    /// Aktiver Kategorie-Filter (aus einer Sammel-Mitteilung): traechtigkeit / hemmstoff / weiterbehandlung.
+    @State private var activeFilter: String?
 
     var body: some View {
         Group {
@@ -49,25 +52,90 @@ struct TaskListView: View {
             }
         }
         .navigationTitle("Aufgaben")
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            applyPendingFilter()
+        }
         .refreshable { await vm.load() }
         .onChange(of: vm.needsReauth) { _, val in
             if val { session.handleCattleAPIError(CattleAPIError.tokenExpired) }
+        }
+        .onChange(of: pushRouter.taskFilter) { _, _ in
+            applyPendingFilter()
+        }
+    }
+
+    /// Übernimmt einen vom Push gesetzten Filter und setzt ihn im Router zurück.
+    private func applyPendingFilter() {
+        if let f = pushRouter.taskFilter {
+            activeFilter = f
+            pushRouter.taskFilter = nil
+        }
+    }
+
+    /// Welche Sektionen bei aktivem Filter sichtbar sind.
+    private func isVisible(_ key: String) -> Bool {
+        guard let f = activeFilter else { return true }
+        switch f {
+        case "traechtigkeit": return key == "tu"
+        case "hemmstoff": return key == "hemmstoff_versendet"
+        case "weiterbehandlung": return key == "weiterbehandlung"
+        default: return true
+        }
+    }
+
+    private var filterLabel: String {
+        switch activeFilter {
+        case "traechtigkeit": return "TU-Kontrollen"
+        case "hemmstoff": return "Versendete Proben"
+        case "weiterbehandlung": return "Weiterbehandlungen"
+        default: return "Gefiltert"
         }
     }
 
     private var taskList: some View {
         List {
-            taskSection(title: "Wartezeit aktiv", icon: "clock.badge.exclamationmark", tasks: vm.dashboard?.wartezeit_aktiv)
-            taskSection(title: "Weiterbehandlungen f\u{00E4}llig", icon: "syringe", tasks: vm.dashboard?.weiterbehandlungen)
-            taskSection(title: "Hemmstoffproben f\u{00E4}llig", icon: "flask", tasks: vm.dashboard?.hemmstoff_faellig)
-            taskSection(title: "Versendete Proben", icon: "shippingbox", tasks: vm.dashboard?.hemmstoff_versendet)
-            taskSection(title: "TU-Kontrollen f\u{00E4}llig", icon: "heart.text.clipboard", tasks: vm.dashboard?.tu_faellig)
+            if activeFilter != nil {
+                filterBanner
+            }
+            if isVisible("wartezeit") {
+                taskSection(title: "Wartezeit aktiv", icon: "clock.badge.exclamationmark", tasks: vm.dashboard?.wartezeit_aktiv)
+            }
+            if isVisible("weiterbehandlung") {
+                taskSection(title: "Weiterbehandlungen f\u{00E4}llig", icon: "syringe", tasks: vm.dashboard?.weiterbehandlungen)
+            }
+            if isVisible("hemmstoff_faellig") {
+                taskSection(title: "Hemmstoffproben f\u{00E4}llig", icon: "flask", tasks: vm.dashboard?.hemmstoff_faellig)
+            }
+            if isVisible("hemmstoff_versendet") {
+                taskSection(title: "Versendete Proben", icon: "shippingbox", tasks: vm.dashboard?.hemmstoff_versendet)
+            }
+            if isVisible("tu") {
+                taskSection(title: "TU-Kontrollen f\u{00E4}llig", icon: "heart.text.clipboard", tasks: vm.dashboard?.tu_faellig)
+            }
         }
         .listStyle(.insetGrouped)
         .navigationDestination(for: FlexibleID.self) { id in
             CattleDetailView(cattleId: id.value)
         }
+    }
+
+    private var filterBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                .foregroundStyle(AppTheme.primary)
+            Text("Gefiltert: \(filterLabel)")
+                .font(.subheadline.weight(.medium))
+            Spacer()
+            Button {
+                activeFilter = nil
+            } label: {
+                Label("Filter entfernen", systemImage: "xmark.circle.fill")
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .listRowBackground(AppTheme.primary.opacity(0.08))
     }
 
     private func taskSection(title: String, icon: String, tasks: [DashboardTask]?) -> some View {
