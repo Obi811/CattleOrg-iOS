@@ -1,0 +1,34 @@
+name: CattleOrgApp
+options:
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+targets:
+  CattleOrgApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - Sources
+      - Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.obitron.Cattleorg
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: App.entitlements
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: CattleOrgApp
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        APIBaseURL: $(API_BASE_URL)
+        ITSAppUsesNonExemptEncryption: false
+        UIBackgroundModes: [remote-notification]

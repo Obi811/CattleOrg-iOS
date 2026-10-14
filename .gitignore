@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Xcode / build
+build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+!default.xcworkspace
+xcuserdata/
+*.xcuserstate
+*.moved-aside
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Sensible Store-/Review-Unterlagen (Zugangsdaten, Telefonnummer) NICHT veröffentlichen
+app_store_assets/listing_kit.*
+
+# Logs
+*.log
