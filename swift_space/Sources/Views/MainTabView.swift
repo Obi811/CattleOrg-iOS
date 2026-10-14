@@ -67,8 +67,9 @@ struct MainTabView: View {
 
     private func handlePushTarget(_ target: PushTarget) {
         switch target {
-        case .tasks:
+        case .tasks(let filter):
             selectedTab = 2
+            pushRouter.taskFilter = filter
         case .cattle(let id):
             selectedTab = 1
             cattlePath = NavigationPath()

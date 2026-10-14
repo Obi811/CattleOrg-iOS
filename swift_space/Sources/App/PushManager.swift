@@ -8,7 +8,9 @@ private let pushLogger = Logger(subsystem: "com.cattleorg.app", category: "Push"
 
 // MARK: - Deep-Link-Ziel einer Push-Mitteilung
 enum PushTarget: Equatable {
-    case tasks
+    /// Aufgaben-Tab; optionaler Filter aus einer Sammel-Mitteilung
+    /// (Werte: `traechtigkeit`, `hemmstoff`, `weiterbehandlung`).
+    case tasks(filter: String?)
     case cattle(id: String)
 }
 
@@ -22,6 +24,8 @@ final class PushRouter {
     var deviceTokenHex: String?
     /// Ausstehendes Ziel, zu dem nach einem Tap auf eine Mitteilung navigiert werden soll.
     var pendingTarget: PushTarget?
+    /// Aktiver Aufgaben-Filter aus einer Sammel-Mitteilung (wird von der Aufgaben-Ansicht gelesen).
+    var taskFilter: String?
     private init() {}
 }
 
@@ -73,8 +77,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    /// Wertet die Custom-Felder des Payloads aus (`type`, `cattle_id`).
+    /// Wertet die Custom-Felder des Payloads aus (`type`, `target`, `filter`, `cattle_id`).
     static func target(from userInfo: [AnyHashable: Any]) -> PushTarget {
+        let type = userInfo["type"] as? String
+        let targetField = userInfo["target"] as? String
+        // Sammel-Mitteilung (§4.1): in den Aufgaben-Tab springen, optional vorfiltern.
+        if type == "summary" || targetField == "tasks" {
+            let filter = (userInfo["filter"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return .tasks(filter: filter)
+        }
+        // Einzel-Mitteilung mit betroffenem Tier → Tierdetail.
         if let cid = userInfo["cattle_id"] {
             let str: String?
             switch cid {
@@ -85,6 +97,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             }
             if let s = str { return .cattle(id: s) }
         }
-        return .tasks
+        return .tasks(filter: nil)
     }
 }
