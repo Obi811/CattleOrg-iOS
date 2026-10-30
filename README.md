@@ -8,11 +8,22 @@ Die App greift ausschließlich über die bestehende Token-API des Server-Projekt
 - Anmeldung mit bestehendem Konto (Token-Speicherung in der iOS-Keychain)
 - Betriebsauswahl (Mehrbetriebsfähigkeit)
 - Übersicht fälliger Aufgaben (Wartezeiten, Weiterbehandlungen, Hemmstoffproben, TU-Kontrollen)
-- Tierliste mit Ohrmarken-Suche und Status-/Wartezeit-Anzeige
-- Tierdetail mit Behandlungen, Besamungen, Trächtigkeitskontrollen, Hemmstoffproben
+- Geplante Behandlungen mit Fälligkeitsdatum: in den Aufgaben als eigene Sektion mit **Erledigt** (Datumsauswahl), **Bearbeiten** und **Verwerfen**; überfällige Einträge hervorgehoben. Erledigen übernimmt den Eintrag als Behandlung der Kuh
+- Dashboard-Kacheln **Milchkühe**, **Trockensteher** und **Geplant fällig** (Tipp führt in die gefilterte Tierliste)
+- Tierliste mit Ohrmarken-Suche, Status-/Wartezeit-Anzeige und Filtern **Nur Milchkühe** / **Nur Trockensteher**
+- Gruppenaktionen pro Box: Mehrfachauswahl → Umzug / Inaktivieren / Behandeln / Behandlung planen (mit Bestätigung)
+- Totgeburten-Erfassung pro Kuh (ohne Ohrmarke), angezeigt bei den Kalbungen im Tierdetail
+- Tierdetail mit Behandlungen, geplanten Behandlungen, Besamungen, Trächtigkeitskontrollen, Totgeburten, Hemmstoffproben
 - Schnell-Erfassung und „Abgang melden“
-- Rollen-/Rechte-Berücksichtigung (Lesen/Schreiben)
-- Push-Benachrichtigungen (APNs, Deep-Link zum Tier)
+- Rollen-/Rechte-Berücksichtigung (Lesen/Schreiben; Demo-Betriebe schreibgeschützt)
+- Push-Benachrichtigungen (APNs, Deep-Link zum Tier, Sammel-Mitteilungen); Badge wird beim Öffnen der App zurückgesetzt
+- Datumsanzeige im deutschen Format TT.MM.JJJJ
+
+> **Hinweis:** Die mit V0.10 ergänzten Funktionen (geplante Behandlungen, Totgeburten,
+> Gruppenaktionen, Milchkuh-/Trockensteher-Kennzahlen und -Filter) nutzen neue API-Endpunkte.
+> Solange diese serverseitig noch nicht live sind, zeigt die App in den betroffenen Bereichen
+> einen freundlichen **„bald verfügbar“**-Zustand und funktioniert ohne weitere App-Änderung,
+> sobald die API bereitsteht.
 
 ## Projektstruktur
 ```

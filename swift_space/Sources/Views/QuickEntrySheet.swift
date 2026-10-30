@@ -9,8 +9,13 @@ enum QuickEntryType: String, CaseIterable, Identifiable {
     case inhibitorTest = "Hemmstofftest"
     case pregnancyCheck = "TU-Kontrolle"
     case departure = "Abgang"
+    case plannedTreatment = "Geplante Behandlung"
+    case stillbirth = "Totgeburt"
 
     var id: String { rawValue }
+
+    /// Typen, die im Schnellerfassungs-Umschalter (ohne vorgewähltes Tier) angeboten werden.
+    static var quickCases: [QuickEntryType] { [.treatment, .insemination, .inhibitorTest, .pregnancyCheck, .departure] }
 }
 
 struct QuickEntrySheet: View {
@@ -18,12 +23,13 @@ struct QuickEntrySheet: View {
     @Environment(SessionManager.self) private var session
     @State var initialType: QuickEntryType
     var preselectedCattle: Cattle?
+    var editingPlanned: PlannedTreatment?
 
     var body: some View {
         VStack(spacing: 0) {
-            if preselectedCattle == nil {
+            if preselectedCattle == nil && editingPlanned == nil {
                 Picker("Aktion", selection: $initialType) {
-                    ForEach(QuickEntryType.allCases) { type in
+                    ForEach(QuickEntryType.quickCases) { type in
                         Text(type.rawValue).tag(type)
                     }
                 }
@@ -55,6 +61,10 @@ struct QuickEntrySheet: View {
             PregnancyCheckFormView(preselectedCattle: preselectedCattle, onSave: { dismiss() })
         case .departure:
             DepartureFormView(preselectedCattle: preselectedCattle, onSave: { dismiss() })
+        case .plannedTreatment:
+            PlannedTreatmentFormView(preselectedCattle: preselectedCattle, editing: editingPlanned, onSave: { dismiss() })
+        case .stillbirth:
+            StillbirthFormView(preselectedCattle: preselectedCattle, onSave: { dismiss() })
         }
     }
 }
@@ -548,6 +558,242 @@ struct DepartureFormView: View {
         if !grund.isEmpty { body["grund"] = grund }
         do {
             try await CattleAPI.reportDeparture(body)
+            onSave()
+        } catch let err as CattleAPIError {
+            if case .notFound = err {
+                errorMessage = "Diese Funktion ist noch nicht verf\u{00FC}gbar. Bitte den Server-Endpunkt erg\u{00E4}nzen."
+            } else {
+                errorMessage = err.localizedDescription
+            }
+        } catch {
+            errorMessage = "Fehler beim Speichern."
+        }
+    }
+}
+
+// MARK: - Planned Treatment Form (geplante Behandlung)
+// Server-Endpunkt /api/v1/planned-treatments/ (ab V0.10; vorher 404 -> "bald verfügbar")
+struct PlannedTreatmentFormView: View {
+    var preselectedCattle: Cattle?
+    var editing: PlannedTreatment?
+    var onSave: () -> Void
+    @State private var selectedCattle: Cattle?
+    @State private var showCattlePicker = false
+    @State private var medications: [Medication] = []
+    @State private var selectedMedicationName = ""
+    @State private var dosage = ""
+    @State private var plannedDate = Date()
+    @State private var treatmentType = "Injektion"
+    @State private var notes = ""
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @FocusState private var focusField: Int?
+
+    private var isEditing: Bool { editing != nil }
+
+    var body: some View {
+        Form {
+            Section("Tier") {
+                if isEditing {
+                    Text(editing?.displayTag ?? "\u{2013}")
+                        .font(.body.monospaced())
+                } else {
+                    Button {
+                        if preselectedCattle == nil { showCattlePicker = true }
+                    } label: {
+                        HStack {
+                            Text(selectedCattle?.displayTag ?? "Tier ausw\u{00E4}hlen")
+                                .foregroundStyle(selectedCattle == nil ? .secondary : .primary)
+                            Spacer()
+                            if preselectedCattle == nil {
+                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .disabled(preselectedCattle != nil)
+                }
+            }
+            Section("Behandlung") {
+                if medications.isEmpty {
+                    Text("Medikamente werden geladen\u{2026}").foregroundStyle(.secondary)
+                } else {
+                    Picker("Medikament", selection: $selectedMedicationName) {
+                        Text("Ausw\u{00E4}hlen").tag("")
+                        ForEach(medications) { med in
+                            Text(med.name ?? "Unbekannt").tag(med.name ?? "")
+                        }
+                        if !selectedMedicationName.isEmpty && !medications.contains(where: { $0.name == selectedMedicationName }) {
+                            Text(selectedMedicationName).tag(selectedMedicationName)
+                        }
+                    }
+                }
+                Picker("Art", selection: $treatmentType) {
+                    ForEach(TreatmentTypeCatalog.all, id: \.self) { t in
+                        Text(t).tag(t)
+                    }
+                }
+                TextField("Dosis (optional)", text: $dosage)
+                    .focused($focusField, equals: 0)
+                    .contentShape(Rectangle())
+                    .onTapGesture { focusField = 0 }
+            }
+            Section("Termin") {
+                DatePicker("Geplantes Datum", selection: $plannedDate, displayedComponents: .date)
+                    .environment(\.locale, Locale(identifier: "de_DE"))
+                TextField("Bemerkungen (optional)", text: $notes)
+                    .focused($focusField, equals: 1)
+                    .contentShape(Rectangle())
+                    .onTapGesture { focusField = 1 }
+            }
+            if let err = errorMessage {
+                Section { Text(err).foregroundStyle(AppTheme.warning).font(.subheadline) }
+            }
+            Section {
+                Button {
+                    Task { await save() }
+                } label: {
+                    HStack {
+                        Spacer()
+                        if isLoading { ProgressView() } else { Text("Speichern").bold() }
+                        Spacer()
+                    }
+                }
+                .disabled(isLoading || (!isEditing && selectedCattle == nil) || selectedMedicationName.isEmpty)
+            }
+        }
+        .task {
+            if let e = editing {
+                selectedMedicationName = e.medication ?? ""
+                dosage = e.dosage ?? ""
+                treatmentType = (e.type?.isEmpty == false) ? (e.type ?? "Injektion") : "Injektion"
+                notes = e.notes ?? ""
+                if let d = DateHelper.parse(e.planned_date) { plannedDate = d }
+            } else {
+                selectedCattle = preselectedCattle
+            }
+            await loadMedications()
+        }
+        .sheet(isPresented: $showCattlePicker) {
+            NavigationStack { CattlePickerSheet(selectedCattle: $selectedCattle) }
+        }
+    }
+
+    private func loadMedications() async {
+        do { medications = try await CattleAPI.fetchMedications() } catch { }
+    }
+
+    private func save() async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        var body: [String: Any] = [
+            "planned_date": DateHelper.apiString(from: plannedDate),
+            "medication": selectedMedicationName,
+            "type": treatmentType
+        ]
+        if !dosage.isEmpty { body["dosage"] = dosage }
+        if !notes.isEmpty { body["notes"] = notes }
+        do {
+            if let e = editing {
+                try await CattleAPI.updatePlannedTreatment(id: e.id.value, body: body)
+            } else {
+                guard let cattle = selectedCattle else { return }
+                body["cattle_id"] = cattle.id.value
+                let _ = try await CattleAPI.createPlannedTreatment(body)
+            }
+            onSave()
+        } catch let err as CattleAPIError {
+            if case .notFound = err {
+                errorMessage = "Diese Funktion ist noch nicht verf\u{00FC}gbar. Bitte den Server-Endpunkt erg\u{00E4}nzen."
+            } else {
+                errorMessage = err.localizedDescription
+            }
+        } catch {
+            errorMessage = "Fehler beim Speichern."
+        }
+    }
+}
+
+// MARK: - Stillbirth Form (Totgeburt)
+// Server-Endpunkt /api/v1/stillbirths/ (ab V0.10; vorher 404 -> "bald verfügbar")
+struct StillbirthFormView: View {
+    var preselectedCattle: Cattle?
+    var onSave: () -> Void
+    @State private var selectedCattle: Cattle?
+    @State private var showCattlePicker = false
+    @State private var birthDate = Date()
+    @State private var sex = "weiblich"
+    @State private var comment = ""
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @FocusState private var focusField: Int?
+
+    var body: some View {
+        Form {
+            Section("Mutter-Tier") {
+                Button {
+                    if preselectedCattle == nil { showCattlePicker = true }
+                } label: {
+                    HStack {
+                        Text(selectedCattle?.displayTag ?? "Tier ausw\u{00E4}hlen")
+                            .foregroundStyle(selectedCattle == nil ? .secondary : .primary)
+                        Spacer()
+                        if preselectedCattle == nil {
+                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .disabled(preselectedCattle != nil)
+            }
+            Section("Totgeburt") {
+                DatePicker("Datum", selection: $birthDate, displayedComponents: .date)
+                    .environment(\.locale, Locale(identifier: "de_DE"))
+                Picker("Geschlecht", selection: $sex) {
+                    Text("Weiblich").tag("weiblich")
+                    Text("M\u{00E4}nnlich").tag("maennlich")
+                    Text("Unbekannt").tag("unbekannt")
+                }
+                .pickerStyle(.segmented)
+                TextField("Bemerkung (optional)", text: $comment)
+                    .focused($focusField, equals: 0)
+                    .contentShape(Rectangle())
+                    .onTapGesture { focusField = 0 }
+            }
+            if let err = errorMessage {
+                Section { Text(err).foregroundStyle(AppTheme.warning).font(.subheadline) }
+            }
+            Section {
+                Button {
+                    Task { await save() }
+                } label: {
+                    HStack {
+                        Spacer()
+                        if isLoading { ProgressView() } else { Text("Speichern").bold() }
+                        Spacer()
+                    }
+                }
+                .disabled(isLoading || selectedCattle == nil)
+            }
+        }
+        .task { selectedCattle = preselectedCattle }
+        .sheet(isPresented: $showCattlePicker) {
+            NavigationStack { CattlePickerSheet(selectedCattle: $selectedCattle) }
+        }
+    }
+
+    private func save() async {
+        guard let cattle = selectedCattle else { return }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        var body: [String: Any] = [
+            "cattle_id": cattle.id.value,
+            "birth_date": DateHelper.apiString(from: birthDate),
+            "sex": sex
+        ]
+        if !comment.isEmpty { body["comment"] = comment }
+        do {
+            let _ = try await CattleAPI.createStillbirth(body)
             onSave()
         } catch let err as CattleAPIError {
             if case .notFound = err {

@@ -11,6 +11,32 @@ final class TaskListViewModel {
     var errorMessage: String?
     var isNotAvailable = false
     var needsReauth = false
+    var actionMessage: String?
+
+    /// Markiert eine geplante Behandlung als erledigt (erzeugt eine Behandlung am gewählten Datum).
+    func complete(_ pt: PlannedTreatment, date: Date) async {
+        do {
+            try await CattleAPI.completePlannedTreatment(id: pt.id.value, treatmentDate: DateHelper.apiString(from: date))
+            await load()
+            actionMessage = "Als Behandlung übernommen."
+        } catch let err as CattleAPIError {
+            actionMessage = err.localizedDescription
+        } catch {
+            actionMessage = "Aktion fehlgeschlagen."
+        }
+    }
+
+    /// Verwirft eine geplante Behandlung (entfernt sie).
+    func discard(_ pt: PlannedTreatment) async {
+        do {
+            try await CattleAPI.deletePlannedTreatment(id: pt.id.value)
+            await load()
+        } catch let err as CattleAPIError {
+            actionMessage = err.localizedDescription
+        } catch {
+            actionMessage = "Aktion fehlgeschlagen."
+        }
+    }
 
     // TODO: Server-Endpunkt /api/v1/dashboard/ noch nicht implementiert
     func load() async {
@@ -38,6 +64,9 @@ struct TaskListView: View {
     @State private var vm = TaskListViewModel()
     /// Aktiver Kategorie-Filter (aus einer Sammel-Mitteilung): traechtigkeit / hemmstoff / weiterbehandlung.
     @State private var activeFilter: String?
+    @State private var completingTreatment: PlannedTreatment?
+    @State private var editingTreatment: PlannedTreatment?
+    @State private var completeDate = Date()
 
     var body: some View {
         Group {
@@ -62,6 +91,45 @@ struct TaskListView: View {
         }
         .onChange(of: pushRouter.taskFilter) { _, _ in
             applyPendingFilter()
+        }
+        .sheet(item: $completingTreatment) { pt in
+            NavigationStack {
+                Form {
+                    Section("Behandlungsdatum") {
+                        DatePicker("Datum", selection: $completeDate, displayedComponents: .date)
+                            .environment(\.locale, Locale(identifier: "de_DE"))
+                    }
+                    Section {
+                        Text("\(pt.displayTag) wird als Behandlung übernommen.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .navigationTitle("Als erledigt markieren")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Abbrechen") { completingTreatment = nil }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Erledigt") {
+                            let p = pt
+                            completingTreatment = nil
+                            Task { await vm.complete(p, date: completeDate) }
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+        .sheet(item: $editingTreatment, onDismiss: { Task { await vm.load() } }) { pt in
+            NavigationStack {
+                QuickEntrySheet(initialType: .plannedTreatment, editingPlanned: pt)
+            }
+        }
+        .alert("Geplante Behandlung", isPresented: .constant(vm.actionMessage != nil)) {
+            Button("OK") { vm.actionMessage = nil }
+        } message: {
+            Text(vm.actionMessage ?? "")
         }
     }
 
@@ -97,6 +165,9 @@ struct TaskListView: View {
         List {
             if activeFilter != nil {
                 filterBanner
+            }
+            if activeFilter == nil, let planned = vm.dashboard?.geplante_faellig {
+                plannedSection(planned)
             }
             if isVisible("wartezeit") {
                 taskSection(title: "Wartezeit aktiv", icon: "clock.badge.exclamationmark", tasks: vm.dashboard?.wartezeit_aktiv)
@@ -136,6 +207,100 @@ struct TaskListView: View {
             }
         }
         .listRowBackground(AppTheme.primary.opacity(0.08))
+    }
+
+    @ViewBuilder
+    private func plannedSection(_ items: [PlannedTreatment]) -> some View {
+        Section {
+            if items.isEmpty {
+                Text("Keine f\u{00E4}lligen geplanten Behandlungen")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+            } else {
+                ForEach(items) { pt in
+                    plannedRow(pt)
+                }
+            }
+        } header: {
+            Label {
+                HStack {
+                    Text("Geplante Behandlungen f\u{00E4}llig")
+                    Spacer()
+                    if !items.isEmpty {
+                        Text("\(items.count)")
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(.teal, in: Capsule())
+                    }
+                }
+            } icon: {
+                Image(systemName: "calendar.badge.clock")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func plannedRow(_ pt: PlannedTreatment) -> some View {
+        let overdue = pt.overdueDays > 0
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(pt.displayTag)
+                    .font(.body.bold().monospaced())
+                if overdue {
+                    Text("\(pt.overdueDays) Tg. \u{00FC}berf\u{00E4}llig")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(AppTheme.warning, in: Capsule())
+                }
+                Spacer()
+                Text(DateHelper.format(pt.planned_date))
+                    .font(.caption)
+                    .foregroundStyle(overdue ? AppTheme.warning : .secondary)
+            }
+            if let med = pt.medication, !med.isEmpty {
+                Text(med).font(.caption).foregroundStyle(.secondary)
+            }
+            if let t = pt.type, !t.isEmpty {
+                Text(t).font(.caption2).foregroundStyle(.secondary)
+            }
+            if session.canWrite {
+                HStack(spacing: 8) {
+                    Button {
+                        completeDate = Date()
+                        completingTreatment = pt
+                    } label: {
+                        Label("Erledigt", systemImage: "checkmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .tint(.green)
+                    Button {
+                        editingTreatment = pt
+                    } label: {
+                        Label("Bearbeiten", systemImage: "pencil")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .tint(.blue)
+                    Button(role: .destructive) {
+                        Task { await vm.discard(pt) }
+                    } label: {
+                        Label("Verwerfen", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .tint(AppTheme.warning)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .font(.caption.weight(.semibold))
+                .labelStyle(.titleAndIcon)
+                .padding(.top, 2)
+            }
+        }
+        .padding(.vertical, 2)
+        .listRowBackground(overdue ? AppTheme.warning.opacity(0.08) : Color(.secondarySystemGroupedBackground))
     }
 
     private func taskSection(title: String, icon: String, tasks: [DashboardTask]?) -> some View {
@@ -180,7 +345,7 @@ struct TaskListView: View {
 
     private func taskRowContent(_ task: DashboardTask) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(task.ear_tag ?? "Unbekannt")
+            Text(task.displayTag)
                 .font(.body.bold().monospaced())
             if let date = task.displayDate {
                 Text(DateHelper.format(date))

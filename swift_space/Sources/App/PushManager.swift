@@ -26,6 +26,8 @@ final class PushRouter {
     var pendingTarget: PushTarget?
     /// Aktiver Aufgaben-Filter aus einer Sammel-Mitteilung (wird von der Aufgaben-Ansicht gelesen).
     var taskFilter: String?
+    /// Voreinstellung für die Tierliste (z. B. "trockensteher" oder "milchkuh"), gesetzt von einer Dashboard-Kachel.
+    var cattlePreset: String?
     private init() {}
 }
 
