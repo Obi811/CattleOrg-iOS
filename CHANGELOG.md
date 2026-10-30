@@ -4,7 +4,7 @@ Alle nennenswerten Änderungen an der nativen iOS-App werden hier dokumentiert.
 Die App greift ausschließlich über die Token-API des Server-Projekts
 [Obi811/CattleOrg](https://github.com/Obi811/CattleOrg) zu.
 
-## V0.10 – Geplante Behandlungen, Gruppenaktionen, Milchkühe/Trockensteher
+## V1.0.5 – Geplante Behandlungen, Gruppenaktionen, Milchkühe/Trockensteher (30.10.2026)
 
 > Hinweis: Die neuen Funktionen nutzen API-Endpunkte, die serverseitig noch nicht
 > überall live sind. Bis dahin zeigt die App in den betroffenen Bereichen einen
