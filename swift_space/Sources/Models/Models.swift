@@ -31,6 +31,47 @@ struct FlexibleID: Codable, Hashable, Sendable, CustomStringConvertible {
     }
 }
 
+// MARK: - FlexibleInt (handles Int or numeric String from API)
+struct FlexibleInt: Codable, Hashable, Sendable {
+    let value: Int
+    init(_ v: Int) { value = v }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let i = try? c.decode(Int.self) { value = i }
+        else if let s = try? c.decode(String.self), let i = Int(s) { value = i }
+        else if let d = try? c.decode(Double.self) { value = Int(d) }
+        else { value = 0 }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(value)
+    }
+}
+
+// MARK: - Ear Tag Formatter
+/// Formatiert eine Ohrmarkennummer in lesbare Blöcke (z. B. "09 587 12345"),
+/// identisch zur Server-Funktion formatEarTag() in includes/functions.php.
+enum EarTagFormatter {
+    static func format(_ raw: String?) -> String {
+        let clean = (raw ?? "").replacingOccurrences(of: " ", with: "")
+        if clean.isEmpty { return "" }
+        let chars = Array(clean)
+        let part1 = String(chars.prefix(2))
+        let part2 = chars.count > 2 ? String(chars[2..<min(5, chars.count)]) : ""
+        let part3 = chars.count > 5 ? String(chars[5...]) : ""
+        var out = part1
+        if !part2.isEmpty { out += " " + part2 }
+        if !part3.isEmpty { out += " " + part3 }
+        return out
+    }
+}
+
+// MARK: - Behandlungsarten
+/// Katalog der Behandlungsarten, identisch zu treatmentTypes() in includes/functions.php.
+enum TreatmentTypeCatalog {
+    static let all: [String] = ["Injektion", "drenchen", "Eutertube", "Trockenstellen", "Hemmstoff Probe", "Klauenpflege", "Sonstige"]
+}
+
 // MARK: - API Response Wrapper
 struct APIDataResponse<T: Decodable>: Decodable {
     let success: Bool?
@@ -113,8 +154,12 @@ struct Cattle: Codable, Identifiable, Sendable {
     var treatments: [Treatment]?
     var inseminations: [Insemination]?
     var pregnancy_checks: [PregnancyCheck]?
+    var stillbirths: [Stillbirth]?
 
-    var displayTag: String { ear_tag ?? "Unbekannt" }
+    var displayTag: String {
+        let f = EarTagFormatter.format(ear_tag)
+        return f.isEmpty ? "Unbekannt" : f
+    }
     var isWartezeitActive: Bool { wartezeit?.aktiv == true || wz_aktiv == true }
     var wartezeitEnde: String? { wartezeit?.ende ?? wz_ende }
 }
@@ -183,6 +228,65 @@ struct Stall: Codable, Identifiable, Sendable {
     var name: String?
 }
 
+// MARK: - PlannedTreatment (geplante Behandlung)
+struct PlannedTreatment: Codable, Identifiable, Sendable {
+    var id: FlexibleID
+    var cattle_id: FlexibleID?
+    var ear_tag: String?
+    var planned_date: String?
+    var medication: String?
+    var dosage: String?
+    var type: String?
+    var notes: String?
+    var status: String?
+    var treatment_id: FlexibleID?
+    var created_at: String?
+    var done_at: String?
+    var tage_ueberfaellig: FlexibleInt?
+
+    var displayTag: String {
+        let f = EarTagFormatter.format(ear_tag)
+        return f.isEmpty ? "Unbekannt" : f
+    }
+    /// Tage überfällig (>0 = überfällig, 0 = heute fällig).
+    var overdueDays: Int { tage_ueberfaellig?.value ?? 0 }
+}
+
+// MARK: - Stillbirth (Totgeburt)
+struct Stillbirth: Codable, Identifiable, Sendable {
+    var id: FlexibleID
+    var mother_cattle_id: FlexibleID?
+    var mother_ear_tag: String?
+    var birth_date: String?
+    var sex: String?
+    var comment: String?
+    var created_at: String?
+}
+
+// MARK: - Group Actions
+struct GroupAnimal: Codable, Identifiable, Sendable {
+    var id: FlexibleID
+    var ear_tag: String?
+    var rasse: String?
+    var geschlecht: String?
+
+    var displayTag: String {
+        let f = EarTagFormatter.format(ear_tag)
+        return f.isEmpty ? "Unbekannt" : f
+    }
+}
+
+struct GroupActionResult: Codable, Sendable {
+    var action: String?
+    var processed: Int?
+    var cattle_ids: [FlexibleID]?
+}
+
+struct PlannedCompleteResult: Codable, Sendable {
+    var planned_treatment: PlannedTreatment?
+    var treatment: Treatment?
+}
+
 // MARK: - Dashboard
 struct DashboardResponse: Codable {
     var weiterbehandlungen: [DashboardTask]?
@@ -190,7 +294,16 @@ struct DashboardResponse: Codable {
     var hemmstoff_versendet: [DashboardTask]?
     var tu_faellig: [DashboardTask]?
     var wartezeit_aktiv: [DashboardTask]?
+    var geplante_faellig: [PlannedTreatment]?
     var counts: DashboardCounts?
+    var kennzahlen: DashboardKennzahlen?
+}
+
+struct DashboardKennzahlen: Codable, Sendable {
+    var milchkuehe: FlexibleInt?
+    var trockensteher: FlexibleInt?
+    var milchkueheCount: Int { milchkuehe?.value ?? 0 }
+    var trockensteherCount: Int { trockensteher?.value ?? 0 }
 }
 
 struct DashboardTask: Codable, Identifiable, Sendable {
@@ -245,6 +358,11 @@ struct DashboardTask: Codable, Identifiable, Sendable {
     var displayDate: String? {
         treatment_date ?? wartezeit_ende ?? wz_ende ?? probe_date ?? last_insemination
     }
+
+    var displayTag: String {
+        let f = EarTagFormatter.format(ear_tag)
+        return f.isEmpty ? "Unbekannt" : f
+    }
 }
 
 struct DashboardCounts: Codable, Sendable {
@@ -253,6 +371,7 @@ struct DashboardCounts: Codable, Sendable {
     var hemmstoff_versendet: Int?
     var tu_faellig: Int?
     var wartezeit_aktiv: Int?
+    var geplante_faellig: Int?
     var gesamt: Int?
 }
 

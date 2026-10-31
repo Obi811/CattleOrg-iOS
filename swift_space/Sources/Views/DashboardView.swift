@@ -33,6 +33,7 @@ final class DashboardViewModel {
 
 struct DashboardView: View {
     @Environment(SessionManager.self) private var session
+    @Environment(PushRouter.self) private var pushRouter
     @State private var vm = DashboardViewModel()
     @Binding var selectedTab: Int
 
@@ -78,7 +79,27 @@ struct DashboardView: View {
         } else if let err = vm.errorMessage {
             errorCard(err)
         } else {
-            tilesGrid
+            VStack(alignment: .leading, spacing: 16) {
+                if vm.dashboard?.kennzahlen != nil {
+                    Text("Herde").font(.headline)
+                    kennzahlenGrid
+                }
+                Text("Aufgaben").font(.headline)
+                tilesGrid
+            }
+        }
+    }
+
+    private var kennzahlenGrid: some View {
+        LazyVGrid(columns: columns, spacing: 12) {
+            DashboardTile(icon: "drop.fill", label: "Milchk\u{00FC}he", count: vm.dashboard?.kennzahlen?.milchkueheCount ?? 0, color: .blue) {
+                pushRouter.cattlePreset = "milchkuh"
+                selectedTab = 1
+            }
+            DashboardTile(icon: "moon.zzz.fill", label: "Trockensteher", count: vm.dashboard?.kennzahlen?.trockensteherCount ?? 0, color: .indigo) {
+                pushRouter.cattlePreset = "trockensteher"
+                selectedTab = 1
+            }
         }
     }
 
@@ -97,6 +118,9 @@ struct DashboardView: View {
                 selectedTab = 2
             }
             DashboardTile(icon: "heart.text.clipboard", label: "TU f\u{00E4}llig", count: vm.dashboard?.tu_faellig?.count ?? 0, color: AppTheme.primary) {
+                selectedTab = 2
+            }
+            DashboardTile(icon: "calendar.badge.clock", label: "Geplant f\u{00E4}llig", count: vm.dashboard?.geplante_faellig?.count ?? 0, color: .teal) {
                 selectedTab = 2
             }
         }

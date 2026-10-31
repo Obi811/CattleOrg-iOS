@@ -186,12 +186,30 @@ enum CattleAPI {
         page: Int = 1,
         perPage: Int = 50,
         search: String? = nil,
-        status: String? = nil
+        status: String? = nil,
+        geschlecht: String? = nil,
+        stall: String? = nil,
+        wartezeitOnly: Bool = false,
+        traechtigOnly: Bool = false,
+        rasse: String? = nil,
+        minAgeMonths: Int? = nil,
+        maxAgeMonths: Int? = nil,
+        trockensteherOnly: Bool = false,
+        milchkuhOnly: Bool = false
     ) async throws -> (cattle: [Cattle], meta: ResponseMeta?) {
         var q = [URLQueryItem(name: "page", value: String(page)),
                  URLQueryItem(name: "per_page", value: String(perPage))]
         if let s = search, !s.isEmpty { q.append(.init(name: "q", value: s)) }
         if let st = status, !st.isEmpty, st.lowercased() != "alle" { q.append(.init(name: "status", value: st)) }
+        if let g = geschlecht, !g.isEmpty { q.append(.init(name: "geschlecht", value: g)) }
+        if let stl = stall, !stl.isEmpty { q.append(.init(name: "stall", value: stl)) }
+        if wartezeitOnly { q.append(.init(name: "wartezeit", value: "1")) }
+        if traechtigOnly { q.append(.init(name: "traechtig", value: "1")) }
+        if let r = rasse, !r.isEmpty { q.append(.init(name: "rasse", value: r)) }
+        if let minA = minAgeMonths { q.append(.init(name: "min_age", value: String(minA))) }
+        if let maxA = maxAgeMonths { q.append(.init(name: "max_age", value: String(maxA))) }
+        if trockensteherOnly { q.append(.init(name: "trockensteher", value: "1")) }
+        if milchkuhOnly { q.append(.init(name: "milchkuh", value: "1")) }
         let result: (data: [Cattle], meta: ResponseMeta?) = try await getWithMeta(path: "/cattle/", query: q)
         return (result.data, result.meta)
     }
@@ -245,6 +263,79 @@ enum CattleAPI {
     // MARK: - Stalls
     static func fetchStalls() async throws -> [Stall] {
         try await get(path: "/stalls/")
+    }
+
+    // MARK: - Breeds (Rassen)
+    static func fetchBreeds() async throws -> [String] {
+        try await get(path: "/cattle/breeds/")
+    }
+
+    // MARK: - Planned Treatments (geplante Behandlungen)
+    // Server-Endpunkt /api/v1/planned-treatments/ (ab V0.10; vorher 404 -> "bald verfügbar")
+    static func fetchPlannedTreatments(
+        cattleId: String? = nil,
+        status: String? = nil,
+        from: String? = nil,
+        to: String? = nil,
+        page: Int = 1,
+        perPage: Int = 100
+    ) async throws -> (items: [PlannedTreatment], meta: ResponseMeta?) {
+        var q = [URLQueryItem(name: "page", value: String(page)),
+                 URLQueryItem(name: "per_page", value: String(perPage))]
+        if let c = cattleId, !c.isEmpty { q.append(.init(name: "cattle_id", value: c)) }
+        if let s = status, !s.isEmpty { q.append(.init(name: "status", value: s)) }
+        if let f = from, !f.isEmpty { q.append(.init(name: "from", value: f)) }
+        if let t = to, !t.isEmpty { q.append(.init(name: "to", value: t)) }
+        let result: (data: [PlannedTreatment], meta: ResponseMeta?) = try await getWithMeta(path: "/planned-treatments/", query: q)
+        return (result.data, result.meta)
+    }
+
+    static func createPlannedTreatment(_ body: [String: Any]) async throws -> PlannedTreatment {
+        try await post(path: "/planned-treatments/", body: body)
+    }
+
+    static func updatePlannedTreatment(id: String, body: [String: Any]) async throws {
+        try await putVoid(path: "/planned-treatments/", query: [URLQueryItem(name: "id", value: id)], body: body)
+    }
+
+    static func deletePlannedTreatment(id: String) async throws {
+        try await deleteReq(path: "/planned-treatments/", query: [URLQueryItem(name: "id", value: id)])
+    }
+
+    /// Markiert eine geplante Behandlung als erledigt (erzeugt eine Behandlung).
+    static func completePlannedTreatment(id: String, treatmentDate: String? = nil) async throws {
+        var body: [String: Any] = [:]
+        if let d = treatmentDate, !d.isEmpty { body["treatment_date"] = d }
+        let _: APIDataResponse<PlannedCompleteResult> = try await request(
+            method: "POST",
+            path: "/planned-treatments/complete/",
+            queryItems: [URLQueryItem(name: "id", value: id)],
+            body: body
+        )
+    }
+
+    // MARK: - Stillbirths (Totgeburten)
+    // Server-Endpunkt /api/v1/stillbirths/ (ab V0.10; vorher 404 -> "bald verfügbar")
+    static func fetchStillbirths(cattleId: String) async throws -> [Stillbirth] {
+        try await get(path: "/stillbirths/", query: [URLQueryItem(name: "cattle_id", value: cattleId)])
+    }
+
+    static func createStillbirth(_ body: [String: Any]) async throws -> Stillbirth {
+        try await post(path: "/stillbirths/", body: body)
+    }
+
+    static func deleteStillbirth(id: String) async throws {
+        try await deleteReq(path: "/stillbirths/", query: [URLQueryItem(name: "id", value: id)])
+    }
+
+    // MARK: - Group Actions (Gruppenaktionen pro Box)
+    // Server-Endpunkt /api/v1/group-actions/ (ab V0.10; vorher 404 -> "bald verfügbar")
+    static func fetchGroupAnimals(stall: String) async throws -> [GroupAnimal] {
+        try await get(path: "/group-actions/", query: [URLQueryItem(name: "stall", value: stall)])
+    }
+
+    static func performGroupAction(_ body: [String: Any]) async throws -> GroupActionResult {
+        try await post(path: "/group-actions/", body: body)
     }
 
     // MARK: - TODO: Server-Endpunkt /api/v1/dashboard/ noch nicht implementiert

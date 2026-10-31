@@ -12,11 +12,17 @@ final class CattleDetailViewModel {
     var inseminations: [Insemination] = []
     var pregnancyChecks: [PregnancyCheck] = []
     var inhibitorTests: [InhibitorTest] = []
+    var stillbirths: [Stillbirth] = []
+    var plannedTreatments: [PlannedTreatment] = []
+    var plannedError: String?
     var isLoading = false
     var errorMessage: String?
     var inhibitorError: String?
     var needsReauth = false
     var departureMessage: String?
+    var inhibitorUpdatingID: String?
+    var inhibitorActionMessage: String?
+    var actionMessage: String?
 
     init(cattleId: String) {
         self.cattleId = cattleId
@@ -30,6 +36,7 @@ final class CattleDetailViewModel {
         // Load cattle detail
         do {
             cattle = try await CattleAPI.fetchCattleDetail(id: cattleId)
+            stillbirths = cattle?.stillbirths ?? []
         } catch let err as CattleAPIError {
             if case .tokenExpired = err { needsReauth = true; return }
             if case .unauthorized = err { needsReauth = true; return }
@@ -46,6 +53,34 @@ final class CattleDetailViewModel {
             group.addTask { await self.loadInseminations() }
             group.addTask { await self.loadPregnancyChecks() }
             group.addTask { await self.loadInhibitorTests() }
+            group.addTask { await self.loadPlannedTreatments() }
+        }
+    }
+
+    private func loadPlannedTreatments() async {
+        do {
+            let r = try await CattleAPI.fetchPlannedTreatments(cattleId: cattleId)
+            plannedTreatments = r.items
+            plannedError = nil
+        } catch let err as CattleAPIError {
+            if case .notFound = err {
+                plannedError = "Geplante Behandlungen sind bald verf\u{00FC}gbar."
+            }
+        } catch { }
+    }
+
+    func deleteStillbirth(_ s: Stillbirth) async {
+        do {
+            try await CattleAPI.deleteStillbirth(id: s.id.value)
+            await loadAll()
+        } catch let err as CattleAPIError {
+            if case .notFound = err {
+                actionMessage = "Diese Funktion ist noch nicht verf\u{00FC}gbar."
+            } else {
+                actionMessage = err.localizedDescription
+            }
+        } catch {
+            actionMessage = "L\u{00F6}schen fehlgeschlagen."
         }
     }
 
@@ -67,6 +102,28 @@ final class CattleDetailViewModel {
                 inhibitorError = "Hemmstofftests sind bald verf\u{00FC}gbar."
             }
         } catch { }
+    }
+
+    /// Zeichnet eine versendete Probe als "frei" oder "nicht frei".
+    func setInhibitorStatus(id: String, status: String) async {
+        inhibitorUpdatingID = id
+        inhibitorActionMessage = nil
+        defer { inhibitorUpdatingID = nil }
+        do {
+            try await CattleAPI.updateInhibitorTest(id: id, statusValue: status)
+            // Lokal aktualisieren, damit die UI sofort reagiert
+            if let idx = inhibitorTests.firstIndex(where: { $0.id.value == id }) {
+                inhibitorTests[idx].status = status
+            }
+            // Danach frisch vom Server laden
+            await loadInhibitorTests()
+        } catch let err as CattleAPIError {
+            if case .tokenExpired = err { needsReauth = true; return }
+            if case .unauthorized = err { needsReauth = true; return }
+            inhibitorActionMessage = err.localizedDescription
+        } catch {
+            inhibitorActionMessage = "Status konnte nicht gespeichert werden."
+        }
     }
 
     // TODO: Server-Endpunkt /api/v1/cattle/abgang/ noch nicht implementiert
@@ -101,6 +158,8 @@ struct CattleDetailView: View {
     @State private var showAddInsemination = false
     @State private var showAddPregnancy = false
     @State private var showAddInhibitor = false
+    @State private var showAddStillbirth = false
+    @State private var showAddPlanned = false
 
     init(cattleId: String) {
         self.cattleId = cattleId
@@ -149,10 +208,30 @@ struct CattleDetailView: View {
                 QuickEntrySheet(initialType: .departure, preselectedCattle: vm.cattle)
             }
         }
+        .sheet(isPresented: $showAddStillbirth, onDismiss: { Task { await vm.loadAll() } }) {
+            NavigationStack {
+                QuickEntrySheet(initialType: .stillbirth, preselectedCattle: vm.cattle)
+            }
+        }
+        .sheet(isPresented: $showAddPlanned, onDismiss: { Task { await vm.loadAll() } }) {
+            NavigationStack {
+                QuickEntrySheet(initialType: .plannedTreatment, preselectedCattle: vm.cattle)
+            }
+        }
+        .alert("Hinweis", isPresented: .constant(vm.actionMessage != nil)) {
+            Button("OK") { vm.actionMessage = nil }
+        } message: {
+            Text(vm.actionMessage ?? "")
+        }
         .alert("Abgang", isPresented: .constant(vm.departureMessage != nil)) {
             Button("OK") { vm.departureMessage = nil }
         } message: {
             Text(vm.departureMessage ?? "")
+        }
+        .alert("Hemmstoffprobe", isPresented: .constant(vm.inhibitorActionMessage != nil)) {
+            Button("OK") { vm.inhibitorActionMessage = nil }
+        } message: {
+            Text(vm.inhibitorActionMessage ?? "")
         }
     }
 
@@ -161,8 +240,10 @@ struct CattleDetailView: View {
             heroSection(c)
             wartezeitBanner(c)
             treatmentsSection
+            plannedTreatmentsSection
             inseminationsSection
             pregnancySection
+            stillbirthsSection
             inhibitorSection
             if session.canWrite {
                 departureSection
@@ -263,6 +344,100 @@ struct CattleDetailView: View {
         }
     }
 
+    // MARK: - Planned Treatments Section
+    private var plannedTreatmentsSection: some View {
+        Section {
+            if let err = vm.plannedError {
+                Text(err).foregroundStyle(.secondary).font(.subheadline)
+            } else if vm.plannedTreatments.isEmpty {
+                Text("Keine Eintr\u{00E4}ge vorhanden")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+            } else {
+                ForEach(vm.plannedTreatments) { pt in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(DateHelper.format(pt.planned_date)).font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            if let st = pt.status {
+                                StatusBadge(text: st, color: plannedStatusColor(st))
+                            }
+                        }
+                        Text(pt.medication ?? "Behandlung").font(.subheadline.bold())
+                        if let d = pt.dosage, !d.isEmpty { Text("Dosis: \(d)").font(.caption) }
+                        if let t = pt.type, !t.isEmpty { Text(t).font(.caption).foregroundStyle(.secondary) }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            if session.canWrite && vm.plannedError == nil {
+                Button { showAddPlanned = true } label: {
+                    Label("Behandlung planen", systemImage: "calendar.badge.plus")
+                }
+            }
+        } header: {
+            Text("Geplante Behandlungen")
+        }
+    }
+
+    private func plannedStatusColor(_ status: String) -> Color {
+        switch status.lowercased() {
+        case "geplant": return .teal
+        case "erledigt": return .green
+        case "verworfen": return .secondary
+        default: return .secondary
+        }
+    }
+
+    // MARK: - Stillbirths Section
+    private var stillbirthsSection: some View {
+        Section {
+            if vm.stillbirths.isEmpty {
+                Text("Keine Eintr\u{00E4}ge vorhanden")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+            } else {
+                ForEach(vm.stillbirths) { s in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(DateHelper.format(s.birth_date)).font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            Text("Totgeburt").font(.subheadline.bold())
+                            if let sex = s.sex, !sex.isEmpty {
+                                StatusBadge(text: sexLabel(sex), color: .secondary)
+                            }
+                        }
+                        if let c = s.comment, !c.isEmpty { Text(c).font(.caption).foregroundStyle(.secondary) }
+                    }
+                    .padding(.vertical, 2)
+                    .swipeActions(edge: .trailing) {
+                        if session.canWrite {
+                            Button(role: .destructive) {
+                                Task { await vm.deleteStillbirth(s) }
+                            } label: {
+                                Label("L\u{00F6}schen", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+            if session.canWrite {
+                Button { showAddStillbirth = true } label: {
+                    Label("Totgeburt erfassen", systemImage: "plus.circle")
+                }
+            }
+        } header: {
+            Text("Totgeburten")
+        }
+    }
+
+    private func sexLabel(_ sex: String) -> String {
+        switch sex.lowercased() {
+        case "maennlich", "männlich": return "männlich"
+        case "weiblich": return "weiblich"
+        default: return "unbekannt"
+        }
+    }
+
     // MARK: - Inseminations Section
     private var inseminationsSection: some View {
         Section {
@@ -336,16 +511,7 @@ struct CattleDetailView: View {
                     .font(.subheadline)
             } else {
                 ForEach(vm.inhibitorTests) { test in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(DateHelper.format(test.probe_date)).font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Text("Nr. \(test.nummer ?? "\u{2013}")").font(.subheadline.bold())
-                            if let s = test.status {
-                                StatusBadge(text: s, color: s.lowercased() == "negativ" ? .green : .orange)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
+                    inhibitorRow(test)
                 }
             }
             if session.canWrite && vm.inhibitorError == nil {
@@ -355,6 +521,57 @@ struct CattleDetailView: View {
             }
         } header: {
             Text("Hemmstofftests")
+        }
+    }
+
+    @ViewBuilder
+    private func inhibitorRow(_ test: InhibitorTest) -> some View {
+        let status = test.status ?? "\u{2013}"
+        let isVersendet = status.lowercased() == "versendet"
+        VStack(alignment: .leading, spacing: 6) {
+            Text(DateHelper.format(test.probe_date)).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Nr. \(test.nummer ?? "\u{2013}")").font(.subheadline.bold())
+                StatusBadge(text: status, color: inhibitorStatusColor(status))
+                Spacer()
+                if vm.inhibitorUpdatingID == test.id.value {
+                    ProgressView()
+                }
+            }
+            // Nur versendete Proben lassen sich zeichnen, und nur mit Schreibrecht.
+            if isVersendet && session.canWrite {
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await vm.setInhibitorStatus(id: test.id.value, status: "frei") }
+                    } label: {
+                        Label("Frei", systemImage: "checkmark.circle")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .tint(.green)
+                    Button {
+                        Task { await vm.setInhibitorStatus(id: test.id.value, status: "nicht frei") }
+                    } label: {
+                        Label("Nicht frei", systemImage: "xmark.circle")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .tint(AppTheme.warning)
+                }
+                .buttonStyle(.bordered)
+                .disabled(vm.inhibitorUpdatingID != nil)
+                .padding(.top, 2)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func inhibitorStatusColor(_ status: String) -> Color {
+        switch status.lowercased() {
+        case "frei": return .green
+        case "nicht frei": return AppTheme.warning
+        case "versendet": return .orange
+        default: return .secondary
         }
     }
 
